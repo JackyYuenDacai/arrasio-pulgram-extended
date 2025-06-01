@@ -11,12 +11,14 @@ class GameP2P {    constructor() {
         this.lastStateUpdate = 0; // Track when we last received a state update
         this.hostCheckInterval = null;
         this.gameId = null;
+        this.gameStarted = false; // Track if game has started
         this.callbacks = {
             onHostChanged: null,
             onPlayerJoined: null, 
             onPlayerLeft: null,
             onGameStateUpdated: null,
-            onPlayerInput: null
+            onPlayerInput: null,
+            onGameStarted: null // New callback for game start
         };
         
         // Store our peer ID for later reference
@@ -46,60 +48,55 @@ class GameP2P {    constructor() {
         PLAYER_INPUT: 'PLAYER_INPUT'
     };
 
+    startGame() {
+        if (!this.gameStarted) {
+            console.log('Game starting...');
+            this.gameStarted = true;
+            
+            // If we're host, initialize game state
+            if (this.isHost) {
+                this.initializeGameStateAsHost();
+            }
+            
+            // Notify callback
+            if (typeof this.callbacks.onGameStarted === 'function') {
+                this.callbacks.onGameStarted();
+            }
+        }
+    }
+
     initialize() {
         if (this.initialized) return;
         
         console.log('Initializing P2P Game System');
-          // Setup message listener for game messages
-        // Listen for incoming messages using the proper Pulgram API method        
-        try {
-            // Use the proper method from Pulgram bridge without filtering by message type
-            if (window.pulgram) {
-                // Set up message listener
-                window.pulgram.setOnMessageReceivedListener((message) => {
-                    console.log('Pulgram message received:', message);
-                    // Process all messages regardless of type
-                    this.handleMessage(message);
-                });
-                
-                console.log('Successfully set up Pulgram message listener');
-            } else {
-                console.error('Pulgram not available');
-            }
-        } catch (error) {
-            console.error('Failed to set up message listener:', error);
+
+        // Listen for messages using Pulgram bridge
+        if (window.pulgram) {
+            window.pulgram.setOnMessageReceivedListener((message) => {
+                this.handleMessage(message);
+            });
+            console.log('Pulgram message listener ready');
         }
-          // Start host checking interval (for migration)
+
+        // Start host status checker
         this.hostCheckInterval = setInterval(() => this.checkHostStatus(), 3000);
-          // Initialize game ID if needed
-        if (!this.gameId) {
-            // Use localStorage directly instead of potentially unreliable Pulgram methods
-            try {
-                // Attempt to get from local storage first
-                const storedGameId = localStorage.getItem('p2p-gameId');
-                if (storedGameId) {
-                    this.gameId = storedGameId;
-                } else {
-                    // Generate a new game ID
-                    this.gameId = 'game-' + Date.now();
-                    localStorage.setItem('p2p-gameId', this.gameId);
-                }
-            } catch (e) {
-                // If localStorage fails, generate a new game ID
-                this.gameId = 'game-' + Date.now();
-                console.log('Generated new game ID:', this.gameId);
-            }
+
+        // Initialize or restore game ID
+        try {
+            const storedGameId = localStorage.getItem('p2p-gameId');
+            this.gameId = storedGameId || 'game-' + Date.now();
+            localStorage.setItem('p2p-gameId', this.gameId);
+        } catch (e) {
+            this.gameId = 'game-' + Date.now();
         }
 
-        // Mark as initialized
         this.initialized = true;
+        console.log('P2P Game System initialized with ID:', this.gameId);
 
-        // Announce ourselves to the group
+        // Announce presence and start host election
         this.announcePresence();
-        
-        // Start host election if we don't have a host
         if (!this.hostId) {
-            this.startHostElection();
+            setTimeout(() => this.startHostElection(), 500); // Slight delay to allow for existing host discovery
         }
     }    /**
      * Handle incoming messages
@@ -251,7 +248,7 @@ class GameP2P {    constructor() {
     /**
      * Send a message to a specific user
      * Note: In Pulgram's group chat, we can't send to individual users directly
-     * Instead, we send to the group and filter by receiverId
+     * Instead, we send to the group and filter on receiverId
      */
     sendDirectMessage(content, userId) {
         try {
@@ -626,6 +623,78 @@ class GameP2P {    constructor() {
         
         if (this.hostCheckInterval) {
             clearInterval(this.hostCheckInterval);
+        }
+    }
+
+    /**
+     * Initialize game state when becoming host
+     */
+    initializeGameStateAsHost() {
+        console.log('Initializing game state as host');
+        
+        // Reset game state
+        this.gameState = {
+            players: {},
+            entities: {},
+            gameTime: 0,
+            gameWidth: 8000,
+            gameHeight: 8000,
+            lastUpdate: Date.now()
+        };
+
+        // Add all known players with random starting positions
+        this.players.forEach((player, playerId) => {
+            this.gameState.players[playerId] = {
+                id: playerId,
+                position: {
+                    x: Math.random() * 4000 - 2000,
+                    y: Math.random() * 4000 - 2000
+                },
+                direction: Math.random() * Math.PI * 2,
+                health: 1,
+                score: 0,
+                tank: 'basic',
+                name: player.name || `Player ${playerId.substring(0, 4)}`
+            };
+        });
+
+        // Add initial game entities
+        this.initializeGameEntities();
+
+        // Broadcast initial state to all players
+        this.updateGameState(this.gameState);
+        console.log('Initial game state broadcast complete');
+    }
+
+    initializeGameEntities() {
+        // Add food entities
+        for (let i = 0; i < 100; i++) {
+            this.gameState.entities[`food-${i}`] = {
+                id: `food-${i}`,
+                type: 'food',
+                position: {
+                    x: Math.random() * 6000 - 3000,
+                    y: Math.random() * 6000 - 3000
+                },
+                direction: Math.random() * Math.PI * 2,
+                size: 10 + Math.random() * 5,
+                health: 1
+            };
+        }
+
+        // Add obstacles
+        for (let i = 0; i < 30; i++) {
+            this.gameState.entities[`obstacle-${i}`] = {
+                id: `obstacle-${i}`,
+                type: 'obstacle',
+                position: {
+                    x: Math.random() * 7000 - 3500,
+                    y: Math.random() * 7000 - 3500
+                },
+                direction: 0,
+                size: 30 + Math.random() * 70,
+                health: 1
+            };
         }
     }
 }

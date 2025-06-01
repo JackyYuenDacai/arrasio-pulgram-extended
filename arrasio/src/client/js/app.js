@@ -1293,17 +1293,18 @@ function startGame() {
     // Check if we're in P2P mode
     const isPulgramP2PMode = (window.pulgram);
     
-    // If in P2P mode, check the token field - we don't need it
+    // If in P2P mode, handle the P2P-specific setup
     if (isPulgramP2PMode) {
+        console.log('Starting game in P2P mode');
+        
         // Set some valid token value by default
         const playerKeyInput = document.getElementById('playerKeyInput');
         if (!playerKeyInput.value) {
-            playerKeyInput.value = 'p2p-default-token';
+            playerKeyInput.value = 'p2p-' + window.pulgram.getUserId();
         }
-        console.log('P2P mode: Setting default token');
     }
     
-    // Get options
+    // Store player preferences
     util.submitToLocalStorage('optScreenshotMode');
     config.graphical.screenshotMode = document.getElementById('optScreenshotMode').checked;
     util.submitToLocalStorage('optFancy');
@@ -1313,6 +1314,8 @@ function startGame() {
     util.submitToLocalStorage('optPredictive');
     config.lag.unresponsive = document.getElementById('optPredictive').checked;
     util.submitToLocalStorage('optBorders');
+    
+    // Handle border style settings
     switch (document.getElementById('optBorders').value) {
         case 'normal': 
             config.graphical.darkBorders = config.graphical.neon = false;
@@ -1327,34 +1330,54 @@ function startGame() {
             config.graphical.darkBorders = config.graphical.neon = true;
             break;
     }
+    
+    // Handle color settings
     util.submitToLocalStorage('optColors');
     let a = document.getElementById('optColors').value;
     color = color[(a === '') ? 'normal' : a];
-    // Other more important stuff
+
+    // Store player name and key
     let playerNameInput = document.getElementById('playerNameInput');
     let playerKeyInput = document.getElementById('playerKeyInput');
-    // Name and keys
     util.submitToLocalStorage('playerNameInput');
     util.submitToLocalStorage('playerKeyInput');
     global.playerName = player.name = playerNameInput.value;
     global.playerKey = playerKeyInput.value.replace(/(<([^>]+)>)/ig, '').substring(0, 64);
-    // Change the screen
+
+    // Update screen layout
     global.screenWidth = window.innerWidth;
     global.screenHeight = window.innerHeight;
     document.getElementById('startMenuWrapper').style.maxHeight = '0px';
     document.getElementById('gameAreaWrapper').style.opacity = 1;
-    // Set up the socket
+
+    // Initialize socket connection
     if (!global.socket) {
         global.socket = socketInit(3000);
     }
-    if (!global.animLoopHandle){
+
+    // Start game loop if not already running
+    if (!global.animLoopHandle) {
         animloop();
     }
+    
+    // Set up canvas and game state
     window.canvas.socket = global.socket;
     minimap = [];
+    
+    // If in P2P mode, notify the P2P system that the game is starting
+    if (isPulgramP2PMode && window.arrasP2P && window.arrasP2P.p2pGame) {
+        console.log('Notifying P2P system of game start');
+        window.arrasP2P.p2pGame.startGame();
+    }
+
+    // Start move compensation loop
     setInterval(() => moveCompensation.iterate(global.socket.cmd.getMotion()), 1000/30);
+    
+    // Focus the game canvas
     document.getElementById('gameCanvas').focus();
-    window.onbeforeunload = () => { return true; };
+    
+    // Set up page unload warning
+    window.onbeforeunload = () => true;
 }
 
 // Background clearing
@@ -2042,7 +2065,7 @@ const gameDraw = (() => {
                 drawBar(x-msg.len/2, x+msg.len/2, y+height/2, height, color.black);
                 // Draw the text
                 ctx.globalAlpha = Math.min(1, msg.alpha);
-                msg.textobj.draw(text, x, y + height/2, height-4, color.guiwhite, 'center', true);
+                msg.textobj.draw(text, x, y + height/2, height-4, color.guiwhite, 'center');
                 // Iterate and move
                 y += (vspacing + height);
                 if (msg.status > 1) {

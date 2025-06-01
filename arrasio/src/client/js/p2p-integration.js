@@ -3,6 +3,17 @@
  * This file acts as a bridge between the game and the P2P system
  */
 
+// Helper function to load required scripts
+async function loadRequiredScripts() {
+    try {
+        // Load welcome extension
+        await loadScript('js/p2p-game-welcome.js');
+        console.log('Successfully loaded P2P game welcome extension');
+    } catch (error) {
+        console.error('Failed to load required scripts:', error);
+    }
+}
+
 // Wait for both the game and pulgram to be ready
 document.addEventListener('DOMContentLoaded', function() {
     // Check if pulgram is loaded
@@ -19,8 +30,8 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
     
-    // Make sure to load our Welcome message extension
-    loadScript('js/p2p-game-welcome.js');
+    // Load required scripts
+    loadRequiredScripts();
 });
 
 /**
