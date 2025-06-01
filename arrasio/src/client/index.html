@@ -175,9 +175,16 @@
                 localStorage.setItem('updated', false);
                 $('#patchNotesIFrame').load(function(){
                     $("#patchNotesIFrame").contents().find('#patchNotes').prepend('<update>New update!</update> ');
-                });
-            }
+                });            }
         });
-    </script>
+    </script>    <!-- Pulgram Bridge and P2P Game System -->
+    <script src="../../pulgram-bridge.js"></script>
+    <script src="js/p2p-game.js"></script>
+    <script src="js/arras-p2p-adapter.js"></script>
+    <script src="js/game-state-converter.js"></script>
+    <script src="js/arras-protocol-adapter.js"></script>
+    <script src="js/p2p-websocket-adapter.js"></script>
+    <script src="js/p2p-status-ui.js"></script>
+    <script src="js/p2p-integration.js"></script>
 </body>
 </html>

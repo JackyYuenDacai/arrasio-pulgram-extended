@@ -1,0 +1,477 @@
+/**
+ * P2P Game Host Management System
+ * Uses Pulgram Bridge for communication with host election and migration
+ */
+class GameP2P {
+    constructor() {
+        this.isHost = false;
+        this.hostId = null;
+        this.players = new Map();
+        this.gameState = null;
+        this.lastHostHeartbeat = 0;
+        this.hostCheckInterval = null;
+        this.gameId = null;
+        this.callbacks = {
+            onHostChanged: null,
+            onPlayerJoined: null, 
+            onPlayerLeft: null,
+            onGameStateUpdated: null,
+            onPlayerInput: null
+        };
+        
+        // Monitor if we're initialized
+        this.initialized = false;
+
+        // Auto-initialize when pulgram is ready
+        document.addEventListener('pulgramready', () => this.initialize());
+    }
+
+    // Game-specific message subtypes for GAME_MOVE
+    static MessageSubType = {
+        HOST_ELECTION: 'HOST_ELECTION',
+        HOST_HEARTBEAT: 'HOST_HEARTBEAT',
+        HOST_ASSIGNMENT: 'HOST_ASSIGNMENT',
+        PLAYER_JOIN: 'PLAYER_JOIN',
+        PLAYER_LEAVE: 'PLAYER_LEAVE',
+        GAME_STATE_UPDATE: 'GAME_STATE_UPDATE',
+        PLAYER_INPUT: 'PLAYER_INPUT'
+    };
+
+    initialize() {
+        if (this.initialized) return;
+        
+        console.log('Initializing P2P Game System');
+        
+        // Setup message listener for game messages
+        window.pulgram.setOnMessageReceivedListener(this.handleMessage.bind(this));
+        
+        // Start host checking interval (for migration)
+        this.hostCheckInterval = setInterval(() => this.checkHostStatus(), 3000);
+        
+        // Initialize game ID if needed
+        if (!this.gameId) {
+            // Attempt to get from local storage first
+            const storedGameId = window.pulgram.getLocalStoageItem('gameId');
+            if (storedGameId) {
+                this.gameId = storedGameId;
+            } else {
+                // Generate a new game ID
+                this.gameId = 'game-' + Date.now();
+                window.pulgram.setLocalStorageItem('gameId', this.gameId);
+            }
+        }
+
+        // Mark as initialized
+        this.initialized = true;
+
+        // Announce ourselves to the group
+        this.announcePresence();
+        
+        // Start host election if we don't have a host
+        if (!this.hostId) {
+            this.startHostElection();
+        }
+    }
+
+    /**
+     * Handle incoming messages
+     */
+    handleMessage(message) {
+        // Only process GAME_MOVE message types
+        if (message.type !== window.pulgram.MessageType.GAME_MOVE) return;
+        
+        let gameMessage;
+        try {
+            // The content is a JSON string that contains our game-specific data
+            if (typeof message.content === 'string') {
+                gameMessage = JSON.parse(message.content);
+            } else {
+                gameMessage = message.content;
+            }
+            
+            // Make sure it's a game message
+            if (!gameMessage || !gameMessage.subType || !gameMessage.gameId) {
+                return;
+            }
+            
+            // Skip messages from other games
+            if (gameMessage.gameId !== this.gameId) {
+                return;
+            }
+            
+            // Process based on sub-type
+            switch (gameMessage.subType) {
+                case GameP2P.MessageSubType.HOST_ELECTION:
+                    this.handleHostElection(gameMessage, message.senderId);
+                    break;
+                case GameP2P.MessageSubType.HOST_HEARTBEAT:
+                    this.handleHostHeartbeat(gameMessage, message.senderId);
+                    break;
+                case GameP2P.MessageSubType.HOST_ASSIGNMENT:
+                    this.handleHostAssignment(gameMessage, message.senderId);
+                    break;
+                case GameP2P.MessageSubType.PLAYER_JOIN:
+                    this.handlePlayerJoin(gameMessage, message.senderId);
+                    break;
+                case GameP2P.MessageSubType.PLAYER_LEAVE:
+                    this.handlePlayerLeave(gameMessage, message.senderId);
+                    break;
+                case GameP2P.MessageSubType.GAME_STATE_UPDATE:
+                    this.handleGameStateUpdate(gameMessage, message.senderId);
+                    break;
+                case GameP2P.MessageSubType.PLAYER_INPUT:
+                    this.handlePlayerInput(gameMessage, message.senderId);
+                    break;
+            }
+        } catch (error) {
+            console.error('Error handling game message:', error);
+        }
+    }
+
+    /**
+     * Announce our presence to the group
+     */
+    announcePresence() {
+        const message = this.createGameMessage(GameP2P.MessageSubType.PLAYER_JOIN, {
+            playerId: window.pulgram.getUserId(),
+            timestamp: Date.now()
+        });
+        
+        this.sendGroupMessage(message);
+    }
+
+    /**
+     * Create a game-specific message
+     */
+    createGameMessage(subType, data = {}) {
+        return {
+            subType: subType,
+            gameId: this.gameId,
+            timestamp: Date.now(),
+            ...data
+        };
+    }
+
+    /**
+     * Send a message to the group
+     */
+    sendGroupMessage(content) {
+        const message = window.pulgram.createMessage(
+            content,
+            window.pulgram.MessageType.GAME_MOVE,
+            window.pulgram.ReceiverType.GROUP
+        );
+        
+        window.pulgram.sendMessage(message);
+    }
+
+    /**
+     * Send a message to a specific user
+     */
+    sendDirectMessage(content, userId) {
+        const message = window.pulgram.createMessage(
+            content,
+            window.pulgram.MessageType.GAME_MOVE,
+            window.pulgram.ReceiverType.USER
+        );
+        
+        message.receiverId = userId;
+        window.pulgram.sendMessage(message);
+    }
+
+    /**
+     * Start host election process
+     */
+    startHostElection() {
+        const myId = window.pulgram.getUserId();
+        console.log('Starting host election. My ID:', myId);
+        
+        // Send election message with our ID as candidate
+        const message = this.createGameMessage(GameP2P.MessageSubType.HOST_ELECTION, {
+            candidateId: myId,
+            electionId: Date.now()
+        });
+        
+        this.sendGroupMessage(message);
+        
+        // Wait for a short time to collect responses
+        setTimeout(() => this.finalizeHostElection(), 2000);
+    }
+
+    /**
+     * Handle incoming host election message
+     */
+    handleHostElection(message, senderId) {
+        const myId = window.pulgram.getUserId();
+        
+        // Compare IDs to determine who should be host 
+        // (using string comparison - higher ID wins)
+        if (message.candidateId > myId) {
+            // They have a higher ID, they should be host
+            this.hostId = message.candidateId;
+            this.isHost = false;
+        }
+    }
+
+    /**
+     * Finalize host election and declare winner
+     */
+    finalizeHostElection() {
+        const myId = window.pulgram.getUserId();
+        
+        // If no host is selected, or we appear to have the highest ID
+        if (!this.hostId || this.hostId === myId) {
+            this.becomeHost();
+        }
+    }
+
+    /**
+     * Make this client the host
+     */
+    becomeHost() {
+        const myId = window.pulgram.getUserId();
+        this.hostId = myId;
+        this.isHost = true;
+        console.log('I am now the host:', myId);
+        
+        // Announce host assignment to all players
+        const message = this.createGameMessage(GameP2P.MessageSubType.HOST_ASSIGNMENT, {
+            hostId: myId
+        });
+        
+        this.sendGroupMessage(message);
+        
+        // Start sending regular heartbeats
+        this.startHostHeartbeat();
+        
+        // Trigger callback if defined
+        if (typeof this.callbacks.onHostChanged === 'function') {
+            this.callbacks.onHostChanged(myId, true);
+        }
+    }
+
+    /**
+     * Start sending host heartbeat messages
+     */
+    startHostHeartbeat() {
+        if (!this.isHost) return;
+        
+        if (this.heartbeatInterval) {
+            clearInterval(this.heartbeatInterval);
+        }
+        
+        this.heartbeatInterval = setInterval(() => {
+            const message = this.createGameMessage(GameP2P.MessageSubType.HOST_HEARTBEAT, {
+                hostId: this.hostId
+            });
+            
+            this.sendGroupMessage(message);
+        }, 1000);
+    }
+
+    /**
+     * Handle incoming host heartbeat messages
+     */
+    handleHostHeartbeat(message, senderId) {
+        if (this.hostId !== senderId) {
+            // Received heartbeat from someone who isn't our current host
+            // This could happen during host transitions
+            console.log('Host mismatch. Current:', this.hostId, 'Message:', senderId);
+            return;
+        }
+        
+        // Update last heartbeat time
+        this.lastHostHeartbeat = Date.now();
+    }
+
+    /**
+     * Handle host assignment messages
+     */
+    handleHostAssignment(message, senderId) {
+        const oldHost = this.hostId;
+        this.hostId = message.hostId;
+        this.isHost = (this.hostId === window.pulgram.getUserId());
+        
+        console.log('Host assigned:', this.hostId, 'Am I host?', this.isHost);
+        
+        // Trigger callback if defined
+        if (typeof this.callbacks.onHostChanged === 'function') {
+            this.callbacks.onHostChanged(this.hostId, this.isHost);
+        }
+    }
+
+    /**
+     * Periodically check if the host is still alive
+     */
+    checkHostStatus() {
+        if (this.isHost) return; // We're the host, no need to check
+        
+        // If no heartbeat received in 5 seconds, start new election
+        if (this.hostId && Date.now() - this.lastHostHeartbeat > 5000) {
+            console.log('Host appears to be down. Starting new election.');
+            this.hostId = null;
+            this.startHostElection();
+        }
+    }
+
+    /**
+     * Handle player join events
+     */
+    handlePlayerJoin(message, senderId) {
+        // Add player to our local list
+        this.players.set(senderId, {
+            id: senderId,
+            lastSeen: Date.now()
+        });
+        
+        console.log('Player joined:', senderId);
+        
+        // If we're the host, send current game state to new player
+        if (this.isHost && this.gameState) {
+            const stateMessage = this.createGameMessage(GameP2P.MessageSubType.GAME_STATE_UPDATE, {
+                state: this.gameState,
+                fullState: true
+            });
+            
+            this.sendDirectMessage(stateMessage, senderId);
+        }
+        
+        // Trigger callback if defined
+        if (typeof this.callbacks.onPlayerJoined === 'function') {
+            this.callbacks.onPlayerJoined(senderId);
+        }
+    }
+
+    /**
+     * Handle player leave events
+     */
+    handlePlayerLeave(message, senderId) {
+        // Remove from player list
+        this.players.delete(senderId);
+        
+        console.log('Player left:', senderId);
+        
+        // Trigger callback if defined
+        if (typeof this.callbacks.onPlayerLeft === 'function') {
+            this.callbacks.onPlayerLeft(senderId);
+        }
+    }
+
+    /**
+     * Send player input to the host
+     */
+    sendPlayerInput(inputData) {
+        // Only non-hosts should send player input
+        if (this.isHost) return;
+        
+        const message = this.createGameMessage(GameP2P.MessageSubType.PLAYER_INPUT, {
+            input: inputData
+        });
+        
+        // Send directly to host if we know who it is
+        if (this.hostId) {
+            this.sendDirectMessage(message, this.hostId);
+        } else {
+            // Otherwise broadcast to group
+            this.sendGroupMessage(message);
+        }
+    }
+
+    /**
+     * Handle incoming player input (only the host should process this)
+     */
+    handlePlayerInput(message, senderId) {
+        if (!this.isHost) return;
+        
+        // Trigger callback if defined
+        if (typeof this.callbacks.onPlayerInput === 'function') {
+            this.callbacks.onPlayerInput(senderId, message.input);
+        }
+    }
+
+    /**
+     * Update and broadcast game state (host only)
+     */
+    updateGameState(state, delta = false) {
+        if (!this.isHost) return false;
+        
+        this.gameState = state;
+        
+        const message = this.createGameMessage(GameP2P.MessageSubType.GAME_STATE_UPDATE, {
+            state: delta ? state : this.gameState,
+            isDelta: !!delta
+        });
+        
+        this.sendGroupMessage(message);
+        return true;
+    }
+
+    /**
+     * Handle incoming game state updates (clients only)
+     */
+    handleGameStateUpdate(message, senderId) {
+        // Verify this is from the current host
+        if (senderId !== this.hostId) return;
+        
+        if (message.isDelta) {
+            // Apply delta update
+            // Note: implementation depends on your game's state structure
+            this.gameState = {...this.gameState, ...message.state};
+        } else {
+            // Full state update
+            this.gameState = message.state;
+        }
+        
+        // Trigger callback if defined
+        if (typeof this.callbacks.onGameStateUpdated === 'function') {
+            this.callbacks.onGameStateUpdated(this.gameState, message.isDelta);
+        }
+    }    /**
+     * Register event callbacks
+     */
+    on(event, callback) {
+        if (typeof this.callbacks[event] !== 'undefined') {
+            this.callbacks[event] = callback;
+        }
+    }
+    
+    /**
+     * Remove event callbacks
+     */
+    off(event, callback) {
+        if (typeof this.callbacks[event] !== 'undefined' && 
+            this.callbacks[event] === callback) {
+            this.callbacks[event] = null;
+        }
+    }/**
+     * Handle ping messages and reply with pong
+     */
+    handlePing(message, senderId) {
+        // Only host responds to pings
+        if (!this.isHost) return;
+        
+        // Create pong message with same timestamp
+        const pongMessage = this.createGameMessage('PONG', {
+            timestamp: message.timestamp
+        });
+        
+        // Send pong directly back to sender
+        this.sendDirectMessage(pongMessage, senderId);
+    }
+    
+    /**
+     * Clean up resources
+     */
+    dispose() {
+        if (this.heartbeatInterval) {
+            clearInterval(this.heartbeatInterval);
+        }
+        
+        if (this.hostCheckInterval) {
+            clearInterval(this.hostCheckInterval);
+        }
+    }
+}
+
+// Export for use in other modules
+window.GameP2P = GameP2P;
