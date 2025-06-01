@@ -1028,7 +1028,7 @@ const socketInit = (() => {
     // The initialization function (this is returned)
     return port => {
         // Check if we're using the P2P system
-        const isPulgramP2PMode = window.pulgram && window.pulgram.isStandaloneMode && window.pulgram.isStandaloneMode();
+        const isPulgramP2PMode = (window.pulgram);
         
         // Either create a P2P connection or a regular WebSocket
         let socket;
