@@ -5,10 +5,11 @@
  */
 
 // Store the original WebSocket constructor
-const OriginalWebSocket = WebSocket;
+const OriginalWebSocket = window.WebSocket;
 
 // Create a P2P WebSocket adapter
-class P2PWebSocket {    constructor(url) {
+class P2PWebSocket {
+    constructor(url) {
         console.log('P2PWebSocket: Intercepting WebSocket connection to:', url);
         
         // Set up event listeners
@@ -20,7 +21,10 @@ class P2PWebSocket {    constructor(url) {
         // Track connection state
         this.readyState = 0; // 0 = CONNECTING
         
-        // Initialize the P2P system if not already done
+        // Track if we've processed the initial handshake
+        this._welcomeMessageSent = false;
+        this._roomSetupMessageSent = false;
+          // Initialize the P2P system if not already done
         if (!window.arrasP2P) {
             console.log('P2PWebSocket: Creating P2P adapter');
             window.arrasP2P = new ArrasP2PAdapter().init();
@@ -28,6 +32,31 @@ class P2PWebSocket {    constructor(url) {
         
         // Create protocol adapter for processing game messages
         this.protocolAdapter = new ArrasProtocolAdapter();
+        
+        // Set the connection callback on the P2P game system
+        if (window.arrasP2P.p2pGame) {
+            window.arrasP2P.p2pGame.onGameConnected = () => {
+                console.log('P2P game system says we are connected!');
+                this.setOpen();
+                
+                // If we're host, also send welcome message and room setup
+                if (window.arrasP2P.p2pGame.isHost && this.onmessage) {
+                    // Send welcome message
+                    const welcome = this.protocolAdapter.createWelcomeMessage();
+                    if (welcome) {
+                        this.onmessage({ data: welcome });
+                    }
+                    
+                    // Send room setup after a short delay
+                    setTimeout(() => {
+                        const roomSetup = this.protocolAdapter.createRoomSetupMessage();
+                        if (roomSetup) {
+                            this.onmessage({ data: roomSetup });
+                        }
+                    }, 500);
+                }
+            };
+        }
         
         // Update protocol adapter host status when P2P host changes
         window.arrasP2P.on('onHostChanged', (hostId, isHost) => {
@@ -73,7 +102,59 @@ class P2PWebSocket {    constructor(url) {
             // Process the outgoing message
             try {
                 const p2pMessage = this.protocolAdapter.processOutgoingMessage(data);
-                if (p2pMessage) {
+                
+                // Handle special cases that need immediate responses
+                if (p2pMessage && p2pMessage.type === 'key_verification') {
+                    console.log('P2PWebSocket: Processing key verification');
+                    
+                    // Show P2P mode indicator in the UI
+                    const p2pIndicator = document.getElementById('p2pModeIndicator');
+                    if (p2pIndicator) {
+                        p2pIndicator.style.display = 'block';
+                    }
+                    
+                    // Always handle welcome sequence proactively - crucial for "Connecting..." issue
+                    console.log('P2PWebSocket: Key verification received. Starting welcome sequence...');
+                    
+                    // Force sending welcome message immediately
+                    if (this.onmessage) {
+                        // First, send a welcome message
+                        const welcome = this.protocolAdapter.createWelcomeMessage();
+                        if (welcome) {
+                            this.onmessage({ data: welcome });
+                            console.log('P2PWebSocket: Sent welcome message immediately after key verification');
+                            this._welcomeMessageSent = true;
+                        }
+                        
+                        // After a short delay, send the room setup
+                        setTimeout(() => {
+                            const roomSetup = this.protocolAdapter.createRoomSetupMessage();
+                            if (roomSetup) {
+                                this.onmessage({ data: roomSetup });
+                                console.log('P2P WebSocket: Sent room setup message');
+                                this._roomSetupMessageSent = true;
+                                
+                                // After room setup, send a camera update to initialize view
+                                setTimeout(() => {
+                                    // Send camera update
+                                    const cameraUpdate = this.protocolAdapter.protocol.encode([
+                                        'c',     // camera command
+                                        0,       // x position
+                                        0,       // y position
+                                        1000     // view range
+                                    ]);
+                                    
+                                    if (cameraUpdate) {
+                                        this.onmessage({ data: cameraUpdate });
+                                        console.log('P2P WebSocket: Sent camera update to initialize view');
+                                    }
+                                }, 100);
+                            }
+                        }, 100);
+                    }
+                }
+                // Handle other message types
+                else if (p2pMessage) {
                     // If it's a player input message
                     if (p2pMessage.type === 'player_input') {
                         window.arrasP2P.sendPlayerInput(p2pMessage.input);
@@ -98,22 +179,58 @@ class P2PWebSocket {    constructor(url) {
         };
         
         // Listen for P2P messages
-        window.arrasP2P.p2p.on('onMessageReceived', (message) => {
-            if (message && message.type === 'game_message' && this.onmessage) {
-                // Process incoming game messages
-                const gameMessage = this.protocolAdapter.processIncomingMessage(message.gameMessage);
-                if (gameMessage) {
-                    this.onmessage({ data: gameMessage });
+        if (window.arrasP2P && window.arrasP2P.p2p) {
+            window.arrasP2P.p2p.on('onMessageReceived', (message) => {
+                if (message && message.type === 'game_message' && this.onmessage) {
+                    // Process incoming game messages
+                    const gameMessage = this.protocolAdapter.processIncomingMessage(message.gameMessage);
+                    if (gameMessage) {
+                        this.onmessage({ data: gameMessage });
+                    }
                 }
-            }
-        });
-        
-        // Simulate connection after a short delay
-        setTimeout(() => {
+            });
+        }
+          // Create a method to set the connection to open
+        this.setOpen = () => {
+            // Only do this once
+            if (this.readyState !== 0) return;
+            
+            // Set ready state
             this.readyState = 1; // 1 = OPEN
+            console.log('P2PWebSocket: Connection opened');
+            
+            // Call onopen
             if (this.onopen) {
-                this.onopen({});
+                this.onopen({ target: this });
+                console.log('P2PWebSocket: onopen event fired');
             }
+            
+            // Send immediate welcome message - crucial for getting past the "Connecting..." state
+            if (this.onmessage && window.arrasP2P && window.arrasP2P.p2pGame && window.arrasP2P.p2pGame.isHost) {
+                console.log('P2PWebSocket: Sending welcome message as host');
+                setTimeout(() => {
+                    // Send welcome message
+                    const welcome = this.protocolAdapter.createWelcomeMessage();
+                    if (welcome) {
+                        this.onmessage({ data: welcome });
+                        console.log('P2PWebSocket: Welcome message sent');
+                    }
+                    
+                    // Then room setup
+                    setTimeout(() => {
+                        const roomSetup = this.protocolAdapter.createRoomSetupMessage();
+                        if (roomSetup) {
+                            this.onmessage({ data: roomSetup });
+                            console.log('P2PWebSocket: Room setup message sent');
+                        }
+                    }, 200);
+                }, 200);
+            }
+        };
+        
+        // Simulate connection immediately - we don't need to wait too long
+        setTimeout(() => {
+            this.setOpen();
         }, 500);
     }
     
@@ -124,7 +241,8 @@ class P2PWebSocket {    constructor(url) {
             this.onclose({ code: 1000, reason: 'Connection closed by client' });
         }
     }
-      // Convert P2P game state to a message expected by the game
+    
+    // Convert P2P game state to a message expected by the game
     convertStateToMessage(gameState) {
         // Create a converter if we don't have one already
         if (!this.converter) {
@@ -154,7 +272,6 @@ class P2PWebSocket {    constructor(url) {
             }
         } catch (error) {
             // If it's not JSON, it might be binary format
-            // For binary data, we'd need a more sophisticated parser
             // This is a simplified example that assumes basic controls
             
             if (typeof data === 'string') {
@@ -182,11 +299,13 @@ class P2PWebSocket {    constructor(url) {
 function enableP2PWebSocket() {
     console.log('Enabling P2P WebSocket mode');
     
-    // Only enable if we're in the right mode
-    if (window.pulgram && (!window.pulgram.isStandaloneMode || !window.pulgram.isStandaloneMode())) {
-        console.log('Not in standalone mode, skipping P2P WebSocket override');
+    // Always enable if pulgram is available
+    if (!window.pulgram) {
+        console.log('Pulgram not detected, skipping P2P WebSocket override');
         return;
     }
+    
+    console.log('Pulgram detected, enabling P2P WebSocket override');
     
     // Store the original WebSocket for possible restore later
     window._originalWebSocket = window.WebSocket;

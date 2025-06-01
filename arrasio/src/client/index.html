@@ -67,9 +67,9 @@
                 </div>
                 <div class="startMenuHolder">
                     <div class="sliderHolder">
-                        <div class="slider" id="startMenuSlidingContent">
-                            <center><img src="/favicons/favicon-96x96.png" /></center>
+                        <div class="slider" id="startMenuSlidingContent">                            <center><img src="/favicons/favicon-96x96.png" /></center>
                             <h1>arras.io beta</h1>
+                            <div id="p2pModeIndicator" style="display: none; background: #61b136; color: white; padding: 5px; margin: 5px 0; border-radius: 3px;">P2P MODE ACTIVE</div>
                             <div id="serverName"><h4 class="nopadding">Connecting...</h4></div>
                             <input type="text" autofocus tabindex="1" spellcheck="false" placeholder="This is the tale of:" id="playerNameInput" maxlength="24" />
                             <input type="text" class="conceal" tabindex="3" placeholder="Token required." id="playerKeyInput" maxlength="64" />
@@ -178,13 +178,42 @@
                 });            }
         });
     </script>    <!-- Pulgram Bridge and P2P Game System -->
-    <script src="../../pulgram-bridge.js"></script>
-    <script src="js/p2p-game.js"></script>
+    <script src="https://www.pulgram.com/js/pulgram-bridge.js"></script>    <script src="js/p2p-game.js"></script>
     <script src="js/arras-p2p-adapter.js"></script>
     <script src="js/game-state-converter.js"></script>
     <script src="js/arras-protocol-adapter.js"></script>
     <script src="js/p2p-websocket-adapter.js"></script>
     <script src="js/p2p-status-ui.js"></script>
+ 
     <script src="js/p2p-integration.js"></script>
+    
+    <!-- P2P Mode Auto-Initializer -->
+    <script>
+        // This script will automatically perform additional P2P setup when Pulgram is detected
+        document.addEventListener('pulgramready', function() {
+            console.log('Pulgram detected in HTML initializer. Setting up P2P mode...');
+            
+            // Create indicator to show P2P mode is active
+            const p2pIndicator = document.getElementById('p2pModeIndicator');
+            if (p2pIndicator) {
+                p2pIndicator.style.display = 'block';
+                p2pIndicator.textContent = 'P2P MODE ACTIVE';
+            }
+            
+            // Auto-fill the token field
+            const playerKeyInput = document.getElementById('playerKeyInput');
+            if (playerKeyInput) {
+                playerKeyInput.value = 'p2p-' + Math.random().toString(36).substring(2, 15);
+                // We can hide it since it's not needed in P2P mode
+                playerKeyInput.style.display = 'none';
+            }
+            
+            // Update server name to indicate P2P mode
+            const serverNameElem = document.getElementById('serverName');
+            if (serverNameElem && serverNameElem.querySelector('h4')) {
+                serverNameElem.querySelector('h4').textContent = 'P2P Mode Active';
+            }
+        });
+    </script>
 </body>
 </html>

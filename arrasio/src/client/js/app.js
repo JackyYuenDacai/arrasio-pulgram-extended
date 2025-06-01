@@ -7,6 +7,10 @@
 var global = require('./lib/global');
 var util = require('./lib/util');
 
+// Make protocol globally available to avoid require() errors in P2P modules
+window.protocol = require('./lib/fasttalk');
+const protocol = window.protocol;
+
 // Get color
 var config = {
     graphical: {
@@ -658,7 +662,9 @@ var moveCompensation = (() => {
 const socketInit = (() => {
     // Inital setup stuff
     window.WebSocket = window.WebSocket || window.MozWebSocket;
-    const protocol = require('./lib/fasttalk');
+    // Make protocol globally available to avoid require() errors in P2P modules
+    window.protocol = require('./lib/fasttalk');
+    const protocol = window.protocol;
     // This is what we use to figure out what the hell the server is telling us to look at
     const convert = (() => {
         // Make a data crawler
@@ -1024,11 +1030,18 @@ const socketInit = (() => {
                 return whoopswedesynced;
             },
         };
-    })();
-    // The initialization function (this is returned)
+    })();    // The initialization function (this is returned)
     return port => {
         // Check if we're using the P2P system
         const isPulgramP2PMode = (window.pulgram);
+        
+        console.log('Initializing socket, Pulgram detected:', isPulgramP2PMode);
+        
+        // Make sure P2P WebSocket adapter is enabled
+        if (isPulgramP2PMode && window.enableP2PWebSocket) {
+            console.log('Enabling P2P WebSocket adapter');
+            window.enableP2PWebSocket();
+        }
         
         // Either create a P2P connection or a regular WebSocket
         let socket;
@@ -1036,6 +1049,7 @@ const socketInit = (() => {
             console.log('Using Pulgram P2P mode instead of WebSocket server');
             // The WebSocket constructor is already overridden by p2p-websocket-adapter.js
             socket = new WebSocket('ws://p2p-mode'); // Dummy URL, the adapter ignores it
+            console.log('P2P WebSocket created:', socket);
         } else {
             // Regular WebSocket connection to server
             socket = new WebSocket('ws://' + window.location.hostname + ':' + port);
@@ -1081,22 +1095,41 @@ const socketInit = (() => {
             // Make sure the socket is open before we do anything
             if (!socket.open) return 1;
             socket.send(protocol.encode(message));
-        };                
-        // Websocket functions for when stuff happens
+        };                  // Websocket functions for when stuff happens
         // This is for when the socket first opens
         socket.onopen = function socketOpen() {
             socket.open = true;
-            global.message = 'That token is invalid, expired, or already in use on this server. Please try another one!';
-            socket.talk('k', global.playerKey); console.log('Token submitted to the server for validation.');
+            
+            // Different message handling for P2P mode vs server mode
+            if (isPulgramP2PMode) {
+                global.message = 'Connecting to P2P network...';
+                console.log('P2P mode: Using default token');
+                // In P2P mode, we'll use a fixed token for everyone
+                socket.talk('k', 'p2p-default-token');
+                console.log('P2P token submitted');
+            } else {
+                // Regular server mode
+                global.message = 'That token is invalid, expired, or already in use on this server. Please try another one!';
+                socket.talk('k', global.playerKey);
+                console.log('Token submitted to the server for validation.');
+            }
+            
             // define a pinging function
             socket.ping = (payload) => { socket.talk('p', payload); };
             socket.commandCycle = setInterval(() => { if (socket.cmd.check()) socket.cmd.talk(); });
-        };
-        // Handle incoming messages
+        };// Handle incoming messages
         socket.onmessage = function socketMessage(message) {
             // Make sure it looks legit.
             let m = protocol.decode(message.data);
-            if (m === -1) { throw new Error('Malformed packet.'); }
+            if (m === -1) { 
+                console.error('Malformed packet received:', message.data);
+                throw new Error('Malformed packet.'); 
+            }
+            
+            // Log received message for debugging
+            const msgType = m[0];
+            console.log('Game received message type:', msgType, m);
+            
             // Decide how to interpret it
             switch (m.splice(0, 1)[0]) {
             case 'w': { // welcome to the game
@@ -1257,6 +1290,19 @@ const socketInit = (() => {
 
 // This starts the game and sets up the websocket
 function startGame() {
+    // Check if we're in P2P mode
+    const isPulgramP2PMode = (window.pulgram);
+    
+    // If in P2P mode, check the token field - we don't need it
+    if (isPulgramP2PMode) {
+        // Set some valid token value by default
+        const playerKeyInput = document.getElementById('playerKeyInput');
+        if (!playerKeyInput.value) {
+            playerKeyInput.value = 'p2p-default-token';
+        }
+        console.log('P2P mode: Setting default token');
+    }
+    
     // Get options
     util.submitToLocalStorage('optScreenshotMode');
     config.graphical.screenshotMode = document.getElementById('optScreenshotMode').checked;

@@ -3,10 +3,24 @@
  * This adapter helps convert between the game's binary protocol and our P2P system
  */
 
-class ArrasProtocolAdapter {
-    constructor() {
-        // Load the fasttalk protocol module
-        this.protocol = require('./lib/fasttalk');
+class ArrasProtocolAdapter {    constructor() {
+        // Get the fasttalk protocol module from the global scope instead of using require
+        this.protocol = window.fastTalk || window.protocol;
+        
+        // If protocol not found in global scope, log error
+        if (!this.protocol) {
+            console.error('Protocol module not found in global scope. Make sure fasttalk.js is loaded before this script.');
+            
+            // Try to load it one more time from the window object
+            try {
+                if (window.protocol) {
+                    this.protocol = window.protocol;
+                    console.log('Successfully loaded protocol from window.protocol');
+                }
+            } catch (e) {
+                console.error('Failed to load protocol from window.protocol:', e);
+            }
+        }
         
         // Game state
         this.gameState = {
@@ -47,8 +61,7 @@ class ArrasProtocolAdapter {
         this.isHost = false;
         this.entityIdCounter = 1;
     }
-    
-    /**
+      /**
      * Process an incoming message from the P2P system
      * @param {Object} message - Message from P2P system
      * @returns {String} Binary message in game's protocol format
@@ -61,9 +74,14 @@ class ArrasProtocolAdapter {
                 data = JSON.parse(message);
             }
             
+            // Debug log
+            console.log('P2P Protocol: Processing incoming message', data);
+            
             // Process based on message type
             if (data.type && this.handlers[data.type]) {
-                return this.handlers[data.type](data);
+                const result = this.handlers[data.type](data);
+                console.log('P2P Protocol: Processed message result', result);
+                return result;
             } else {
                 console.log('Unknown message type:', data.type);
                 return null;
@@ -116,8 +134,7 @@ class ArrasProtocolAdapter {
         
         return null;
     }
-    
-    /**
+      /**
      * Process an outgoing message from the game
      * @param {ArrayBuffer} data - Binary message from game
      * @returns {Object} P2P message object
@@ -127,8 +144,12 @@ class ArrasProtocolAdapter {
             // Decode the message using the game's protocol
             const message = this.protocol.decode(data);
             
+            console.log('P2P Protocol: Processing outgoing message', message);
+            
             // Process based on message type
             switch (message[0]) {
+                case 'k': // Key verification (first message sent when socket opens)
+                    return this.handleKeyVerification(message);
                 case 's': // Spawn request
                     return this.handleSpawnRequest(message);
                 case 'S': // Clock sync
@@ -150,6 +171,24 @@ class ArrasProtocolAdapter {
     }
     
     /**
+     * Handle key verification message - this is the first message sent when connecting
+     * It's critical for the game startup sequence
+     */
+    handleKeyVerification(message) {
+        // Player key is in message[1]
+        const playerKey = message[1];
+        console.log('P2P: Received key verification request');
+        
+        // In P2P mode, we'll just accept any key
+        // This triggers the welcome message to be sent automatically
+        
+        return {
+            type: 'key_verification',
+            playerKey: playerKey,
+            success: true
+        };
+    }
+      /**
      * Handle spawn request
      */
     handleSpawnRequest(message) {
@@ -159,6 +198,27 @@ class ArrasProtocolAdapter {
         // Update local player name
         this.localPlayer.name = playerName;
         
+        // Send camera position update message to initialize player view
+        // This is needed for the game to properly start rendering
+        setTimeout(() => {
+            if (window.arrasP2P && this.isHost) {
+                // Create camera update message
+                const cameraUpdate = this.protocol.encode([
+                    'c',                   // camera command
+                    0,                     // x position
+                    0,                     // y position
+                    1000                   // view range
+                ]);
+                
+                // If we have a way to inject messages into the game
+                if (window.arrasP2P.p2p && window.arrasP2P.p2p.socket && 
+                    window.arrasP2P.p2p.socket.onmessage) {
+                    window.arrasP2P.p2p.socket.onmessage({ data: cameraUpdate });
+                    console.log('P2P: Sent camera update message');
+                }
+            }
+        }, 500);
+        
         // Send join message to P2P
         return {
             type: 'player_join',
@@ -166,20 +226,56 @@ class ArrasProtocolAdapter {
             playerName: playerName
         };
     }
-    
-    /**
+      /**
      * Handle clock sync request
      */
     handleClockSync(message) {
         // Client time is in message[1]
         const clientTime = message[1];
         
+        // Create a simulated clock sync response
+        // This is critical for the game to complete initialization
+        const serverTime = Date.now();
+        
+        console.log('P2P: Handling clock sync request', clientTime);
+        
+        // Immediately send a clock sync response
+        this.sendClockSyncResponse(clientTime, 0);
+        
+        // Send multiple clock sync responses with slight variations
+        // to simulate a realistic network and help the game's sync algorithm
+        for (let i = 1; i < 10; i++) {
+            setTimeout(() => {
+                this.sendClockSyncResponse(clientTime, i);
+            }, i * 50);
+        }
+        
         // Return clock sync response that simulates low latency
         return {
             type: 'clock_sync',
             clientTime: clientTime,
-            serverTime: Date.now()
+            serverTime: serverTime
         };
+    }
+    
+    /**
+     * Send a clock sync response message
+     */
+    sendClockSyncResponse(clientTime, index) {
+        // Generate the response with a slight latency variation
+        const latencyVariation = Math.random() * 5;
+        const syncResponse = this.protocol.encode([
+            'S',
+            clientTime,
+            Date.now() + latencyVariation
+        ]);
+        
+        // If we have a way to inject messages into the game
+        if (window.arrasP2P && window.arrasP2P.p2p && window.arrasP2P.p2p.socket && 
+            window.arrasP2P.p2p.socket.onmessage) {
+            window.arrasP2P.p2p.socket.onmessage({ data: syncResponse });
+            console.log('P2P: Sent clock sync response', index);
+        }
     }
     
     /**
@@ -225,39 +321,69 @@ class ArrasProtocolAdapter {
             payload: message[1]
         };
     }
-    
-    /**
+      /**
      * Create a welcome message in the game's protocol format
      */
     createWelcomeMessage() {
-        return this.protocol.encode(['w', true]);
+        console.log('Creating welcome message using protocol');
+        
+        try {
+            if (!this.protocol || typeof this.protocol.encode !== 'function') {
+                console.error('Protocol not available for welcome message');
+                return null;
+            }
+            
+            // The welcome message is crucial - it tells the client it's connected
+            // Format: ['w', <accepted>]
+            const welcomeMsg = this.protocol.encode(['w', true]);
+            console.log('Welcome message created:', welcomeMsg);
+            return welcomeMsg;
+        } catch (error) {
+            console.error('Error creating welcome message:', error);
+            return null;
+        }
     }
-    
-    /**
+      /**
      * Create a room setup message
      */
     createRoomSetupMessage() {
-        const roomSetup = {
-            mode: 'ffa',
-            width: this.gameState.gameWidth,
-            height: this.gameState.gameHeight
-        };
+        console.log('Creating room setup message using protocol');
         
-        const serverStart = {
-            time: Date.now(),
-            version: 1
-        };
-        
-        return this.protocol.encode([
-            'R',
-            this.gameState.gameWidth,
-            this.gameState.gameHeight,
-            JSON.stringify(roomSetup),
-            JSON.stringify(serverStart),
-            this.gameState.roomSpeed
-        ]);
-    }
-      /**
+        try {
+            if (!this.protocol || typeof this.protocol.encode !== 'function') {
+                console.error('Protocol not available for room setup message');
+                return null;
+            }
+            
+            const roomSetup = {
+                mode: 'ffa',
+                width: this.gameState.gameWidth,
+                height: this.gameState.gameHeight
+            };
+            
+            const serverStart = {
+                time: Date.now(),
+                version: 1
+            };
+            
+            // Room setup message is also crucial - it tells the client how to set up the game world
+            // Format: ['R', <width>, <height>, <room-setup-json>, <server-start-json>, <room-speed>]
+            const roomMsg = this.protocol.encode([
+                'R',
+                this.gameState.gameWidth,
+                this.gameState.gameHeight,
+                JSON.stringify(roomSetup),
+                JSON.stringify(serverStart),
+                this.gameState.roomSpeed
+            ]);
+            
+            console.log('Room setup message created:', roomMsg);
+            return roomMsg;
+        } catch (error) {
+            console.error('Error creating room setup message:', error);
+            return null;
+        }
+    }/**
      * Create an update message in the game's protocol format
      */
     createUpdateMessage() {
@@ -267,23 +393,35 @@ class ArrasProtocolAdapter {
         // Create entities array for the update
         const entities = [];
         
+        console.log('P2P: Creating update message from game state', gameState);
+        
         // Add players to entities list
         for (let playerId in gameState.players) {
             const player = gameState.players[playerId];
+            
+            // Make sure we have position data
+            if (!player.position) {
+                player.position = { x: 0, y: 0 };
+            }
+            
+            // Generate a numeric ID (needed by game)
+            const numericId = parseInt(playerId.replace(/\D/g, '')) || 
+                              playerId.split('').reduce((a, c) => a + c.charCodeAt(0), 0);
+            
             entities.push({
-                id: parseInt(playerId) || Math.floor(Math.random() * 1000000),
+                id: numericId,
                 index: 0, // Tank type index
                 x: player.position.x,
                 y: player.position.y, 
                 vx: 0, // Velocity X
                 vy: 0, // Velocity Y
                 size: 30, // Default tank size
-                facing: player.direction,
-                vfacing: player.direction,
+                facing: player.direction || 0,
+                vfacing: player.direction || 0,
                 twiggle: 0,
                 layer: 0,
                 color: 0, // Team color
-                health: player.health,
+                health: player.health || 1,
                 shield: 0,
                 alpha: 1,
                 name: player.name || `Player ${playerId.substring(0, 4)}`,
@@ -295,9 +433,19 @@ class ArrasProtocolAdapter {
         // Add other game entities
         for (let entityId in gameState.entities) {
             const entity = gameState.entities[entityId];
+            
+            // Make sure we have position data
+            if (!entity.position) {
+                entity.position = { x: 0, y: 0 };
+            }
+            
+            // Generate a numeric ID (needed by game)
+            const numericId = parseInt(entityId.replace(/\D/g, '')) || 
+                              entityId.split('').reduce((a, c) => a + c.charCodeAt(0), 0);
+                              
             entities.push({
-                id: parseInt(entityId) || Math.floor(Math.random() * 1000000),
-                index: 1, // Shape type index
+                id: numericId,
+                index: entity.type === 'food' ? 6 : 1, // Different index for different types
                 x: entity.position.x,
                 y: entity.position.y,
                 vx: 0,
@@ -307,12 +455,14 @@ class ArrasProtocolAdapter {
                 vfacing: entity.direction || 0,
                 twiggle: 0,
                 layer: 0,
-                color: 1, // Default shape color
+                color: entity.type === 'food' ? 2 : 1, // Different colors
                 health: entity.health || 1,
                 shield: 0,
                 alpha: 1
             });
         }
+        
+        console.log('P2P: Update message contains', entities.length, 'entities');
         
         // Create the update message with the encoded entities
         return this.protocol.encode(['u', Date.now(), entities]);

@@ -5,27 +5,22 @@
 
 // Wait for both the game and pulgram to be ready
 document.addEventListener('DOMContentLoaded', function() {
-    // Check if pulgram is loaded and if we're in standalone mode
+    // Check if pulgram is loaded
     if (window.pulgram) {
-        // Only initialize P2P if we're in standalone mode
-        if (window.pulgram.isStandaloneMode && window.pulgram.isStandaloneMode()) {
-            console.log("Pulgram detected in standalone mode. Initializing P2P game...");
-            initializeP2PGame();
-        } else {
-            console.log("Pulgram detected but not in standalone mode. Using normal server connection.");
-        }
+        // Always initialize P2P if pulgram is available
+        console.log("Pulgram detected. Initializing P2P game...");
+        initializeP2PGame();
     } else {
         // Wait for pulgram to be ready
         document.addEventListener('pulgramready', function() {
-            // Same check for standalone mode
-            if (window.pulgram.isStandaloneMode && window.pulgram.isStandaloneMode()) {
-                console.log("Pulgram ready in standalone mode. Initializing P2P game...");
-                initializeP2PGame();
-            } else {
-                console.log("Pulgram ready but not in standalone mode. Using normal server connection.");
-            }
+            // Always initialize P2P if pulgram is available
+            console.log("Pulgram ready. Initializing P2P game...");
+            initializeP2PGame();
         });
     }
+    
+    // Make sure to load our Welcome message extension
+    loadScript('js/p2p-game-welcome.js');
 });
 
 /**
@@ -45,6 +40,60 @@ function initializeP2PGame() {
     
     // Connect game rendering to P2P state
     connectGameRendering(adapter);
+    
+    // Add P2P notification to the UI
+    addP2PNotification();
+    
+    // Show P2P mode in the UI
+    const p2pIndicator = document.getElementById('p2pModeIndicator');
+    if (p2pIndicator) {
+        p2pIndicator.style.display = 'block';
+    }
+    
+    // Auto-fill token field with a P2P token
+    const playerKeyInput = document.getElementById('playerKeyInput');
+    if (playerKeyInput) {
+        // Generate a token using our P2P user ID
+        const p2pToken = 'p2p-' + (window.pulgram.getUserId() || Math.random().toString(36).substring(2, 15));
+        playerKeyInput.value = p2pToken;
+        
+        // Optionally hide the token field since it's not needed in P2P mode
+        playerKeyInput.style.display = 'none';
+    }
+}
+
+/**
+ * Add a notification to show that P2P mode is active
+ */
+function addP2PNotification() {
+    // Create notification element
+    const notification = document.createElement('div');
+    notification.id = 'p2p-notification';
+    notification.className = 'p2p-notification';
+    notification.innerHTML = 'P2P Mode Active';
+    
+    // Create connection status element
+    const status = document.createElement('div');
+    status.id = 'p2p-status';
+    status.className = 'p2p-status';
+    status.innerHTML = 'Connecting...';
+    
+    // Add status to notification
+    notification.appendChild(status);
+    
+    // Add to body
+    document.body.appendChild(notification);
+    
+    // Update status when P2P system changes
+    if (window.arrasP2P && window.arrasP2P.on) {
+        window.arrasP2P.on('onHostChanged', (hostId, isHost) => {
+            const statusEl = document.getElementById('p2p-status');
+            if (statusEl) {
+                statusEl.innerHTML = isHost ? 'Hosting Game' : 'Connected to Host';
+                statusEl.className = 'p2p-status ' + (isHost ? 'host' : 'client');
+            }
+        });
+    }
 }
 
 /**

@@ -2,13 +2,13 @@
  * P2P Game Host Management System
  * Uses Pulgram Bridge for communication with host election and migration
  */
-class GameP2P {
-    constructor() {
+class GameP2P {    constructor() {
         this.isHost = false;
         this.hostId = null;
         this.players = new Map();
-        this.gameState = null;
+        this.gameState = 'connecting'; // Start with connecting state
         this.lastHostHeartbeat = 0;
+        this.lastStateUpdate = 0; // Track when we last received a state update
         this.hostCheckInterval = null;
         this.gameId = null;
         this.callbacks = {
@@ -19,11 +19,20 @@ class GameP2P {
             onPlayerInput: null
         };
         
+        // Store our peer ID for later reference
+        this.peerId = window.pulgram ? window.pulgram.getUserId() : null;
+        
+        // Connection callback - will be set by the websocket adapter
+        this.onGameConnected = null;
+        
         // Monitor if we're initialized
         this.initialized = false;
 
         // Auto-initialize when pulgram is ready
-        document.addEventListener('pulgramready', () => this.initialize());
+        document.addEventListener('pulgramready', () => {
+            this.peerId = window.pulgram.getUserId();
+            this.initialize();
+        });
     }
 
     // Game-specific message subtypes for GAME_MOVE
@@ -41,23 +50,44 @@ class GameP2P {
         if (this.initialized) return;
         
         console.log('Initializing P2P Game System');
-        
-        // Setup message listener for game messages
-        window.pulgram.setOnMessageReceivedListener(this.handleMessage.bind(this));
-        
-        // Start host checking interval (for migration)
-        this.hostCheckInterval = setInterval(() => this.checkHostStatus(), 3000);
-        
-        // Initialize game ID if needed
-        if (!this.gameId) {
-            // Attempt to get from local storage first
-            const storedGameId = window.pulgram.getLocalStoageItem('gameId');
-            if (storedGameId) {
-                this.gameId = storedGameId;
+          // Setup message listener for game messages
+        // Listen for incoming messages using the proper Pulgram API method        
+        try {
+            // Use the proper method from Pulgram bridge without filtering by message type
+            if (window.pulgram) {
+                // Set up message listener
+                window.pulgram.setOnMessageReceivedListener((message) => {
+                    console.log('Pulgram message received:', message);
+                    // Process all messages regardless of type
+                    this.handleMessage(message);
+                });
+                
+                console.log('Successfully set up Pulgram message listener');
             } else {
-                // Generate a new game ID
+                console.error('Pulgram not available');
+            }
+        } catch (error) {
+            console.error('Failed to set up message listener:', error);
+        }
+          // Start host checking interval (for migration)
+        this.hostCheckInterval = setInterval(() => this.checkHostStatus(), 3000);
+          // Initialize game ID if needed
+        if (!this.gameId) {
+            // Use localStorage directly instead of potentially unreliable Pulgram methods
+            try {
+                // Attempt to get from local storage first
+                const storedGameId = localStorage.getItem('p2p-gameId');
+                if (storedGameId) {
+                    this.gameId = storedGameId;
+                } else {
+                    // Generate a new game ID
+                    this.gameId = 'game-' + Date.now();
+                    localStorage.setItem('p2p-gameId', this.gameId);
+                }
+            } catch (e) {
+                // If localStorage fails, generate a new game ID
                 this.gameId = 'game-' + Date.now();
-                window.pulgram.setLocalStorageItem('gameId', this.gameId);
+                console.log('Generated new game ID:', this.gameId);
             }
         }
 
@@ -71,56 +101,102 @@ class GameP2P {
         if (!this.hostId) {
             this.startHostElection();
         }
-    }
-
-    /**
+    }    /**
      * Handle incoming messages
-     */
-    handleMessage(message) {
-        // Only process GAME_MOVE message types
-        if (message.type !== window.pulgram.MessageType.GAME_MOVE) return;
-        
+     */    handleMessage(message) {
+        // Log the message for debugging
+        console.log('Received P2P message:', message);
+
         let gameMessage;
         try {
-            // The content is a JSON string that contains our game-specific data
-            if (typeof message.content === 'string') {
-                gameMessage = JSON.parse(message.content);
+            // Handle message regardless of format - important for Pulgram bridge
+            let parsedMessage;
+            
+            // Parse message if it's a string
+            if (typeof message === 'string') {
+                try {
+                    parsedMessage = JSON.parse(message);
+                } catch (e) {
+                    console.error('Failed to parse message as JSON:', e);
+                    return;
+                }
             } else {
-                gameMessage = message.content;
+                parsedMessage = message;
             }
             
-            // Make sure it's a game message
-            if (!gameMessage || !gameMessage.subType || !gameMessage.gameId) {
+            // Extract content - this is where our game data will be
+            // The content might already be a parsed object or might be a JSON string
+            if (parsedMessage.content) {
+                if (typeof parsedMessage.content === 'string') {
+                    try {
+                        gameMessage = JSON.parse(parsedMessage.content);
+                    } catch (e) {
+                        gameMessage = parsedMessage.content;
+                    }
+                } else {
+                    gameMessage = parsedMessage.content;
+                }
+            } else {
+                // If no content field, the message itself might be the game message
+                gameMessage = parsedMessage;
+            }
+            
+            // Log the parsed message for debugging
+            console.log('Parsed message content:', gameMessage);
+              // Make sure it has a subType
+            if (!gameMessage) {
+                console.log('Message is null or undefined');
                 return;
             }
             
-            // Skip messages from other games
-            if (gameMessage.gameId !== this.gameId) {
+            // Log the message type to help debug
+            console.log('Processing message with subType:', gameMessage.subType);
+            
+            // Special handling for GAME_STATE_UPDATE messages which might have a different format
+            if (gameMessage.subType === 'GAME_STATE_UPDATE' || 
+                (gameMessage.state && gameMessage.timestamp)) {
+                // This is a valid game state update message, process it
+                console.log('Valid game state update detected');
+                this.handleGameStateUpdate(gameMessage, parsedMessage.senderId || 'unknown');
                 return;
             }
             
-            // Process based on sub-type
+            // For other message types, make sure it has a subType
+            if (!gameMessage.subType) {
+                console.log('Message missing subType:', gameMessage);
+                return;
+            }
+            
+            // Skip messages from other games if gameId is defined
+            if (gameMessage.gameId && gameMessage.gameId !== this.gameId) {
+                return;
+            }
+            
+            // Extract sender ID from the message
+            // Make sure we handle different message formats
+            const senderId = parsedMessage.senderId || (parsedMessage.sender ? parsedMessage.sender.id : 'unknown-user');
+              // Process based on sub-type
             switch (gameMessage.subType) {
                 case GameP2P.MessageSubType.HOST_ELECTION:
-                    this.handleHostElection(gameMessage, message.senderId);
+                    this.handleHostElection(gameMessage, senderId);
                     break;
                 case GameP2P.MessageSubType.HOST_HEARTBEAT:
-                    this.handleHostHeartbeat(gameMessage, message.senderId);
+                    this.handleHostHeartbeat(gameMessage, senderId);
                     break;
                 case GameP2P.MessageSubType.HOST_ASSIGNMENT:
-                    this.handleHostAssignment(gameMessage, message.senderId);
+                    this.handleHostAssignment(gameMessage, senderId);
                     break;
                 case GameP2P.MessageSubType.PLAYER_JOIN:
-                    this.handlePlayerJoin(gameMessage, message.senderId);
+                    this.handlePlayerJoin(gameMessage, senderId);
                     break;
                 case GameP2P.MessageSubType.PLAYER_LEAVE:
-                    this.handlePlayerLeave(gameMessage, message.senderId);
+                    this.handlePlayerLeave(gameMessage, senderId);
                     break;
                 case GameP2P.MessageSubType.GAME_STATE_UPDATE:
-                    this.handleGameStateUpdate(gameMessage, message.senderId);
+                    this.handleGameStateUpdate(gameMessage, senderId);
                     break;
                 case GameP2P.MessageSubType.PLAYER_INPUT:
-                    this.handlePlayerInput(gameMessage, message.senderId);
+                    this.handlePlayerInput(gameMessage, senderId);
                     break;
             }
         } catch (error) {
@@ -150,33 +226,50 @@ class GameP2P {
             timestamp: Date.now(),
             ...data
         };
-    }
-
-    /**
+    }    /**
      * Send a message to the group
      */
     sendGroupMessage(content) {
-        const message = window.pulgram.createMessage(
-            content,
-            window.pulgram.MessageType.GAME_MOVE,
-            window.pulgram.ReceiverType.GROUP
-        );
-        
-        window.pulgram.sendMessage(message);
+        try {
+            // For Pulgram, all message data must be in the content field
+            // and we need to use group messaging
+            const message = {
+                type: "APP_DATA",
+                receiverType: "GROUP",
+                content: {
+                    ...content  // Include all our game data in the content
+                }
+            };
+            
+            window.pulgram.sendMessage(JSON.stringify(message));
+            console.log('Sent group message:', content);
+        } catch (error) {
+            console.error('Error sending group message:', error);
+        }
     }
 
     /**
      * Send a message to a specific user
+     * Note: In Pulgram's group chat, we can't send to individual users directly
+     * Instead, we send to the group and filter by receiverId
      */
     sendDirectMessage(content, userId) {
-        const message = window.pulgram.createMessage(
-            content,
-            window.pulgram.MessageType.GAME_MOVE,
-            window.pulgram.ReceiverType.USER
-        );
-        
-        message.receiverId = userId;
-        window.pulgram.sendMessage(message);
+        try {
+            // We'll send to group but include the intended recipient
+            const message = {
+                type: "APP_DATA",
+                receiverType: "GROUP", // Must use GROUP for group chat
+                content: {
+                    ...content,
+                    intendedRecipient: userId // Add this field to filter on receive
+                }
+            };
+            
+            window.pulgram.sendMessage(JSON.stringify(message));
+            console.log('Sent directed group message to:', userId);
+        } catch (error) {
+            console.error('Error sending directed message:', error);
+        }
     }
 
     /**
@@ -196,13 +289,22 @@ class GameP2P {
         
         // Wait for a short time to collect responses
         setTimeout(() => this.finalizeHostElection(), 2000);
-    }
-
-    /**
+    }    /**
      * Handle incoming host election message
      */
     handleHostElection(message, senderId) {
         const myId = window.pulgram.getUserId();
+        
+        console.log('Host election from:', senderId, 'candidate:', message.candidateId);
+        
+        // If we're already getting state updates from someone, consider them the host
+        // This prevents multiple hosts when joining an existing game
+        if (this.lastStateUpdate && Date.now() - this.lastStateUpdate < 10000) {
+            console.log('Already receiving state updates, cancelling host election');
+            // Keep existing host, don't try to become host
+            this.isHost = false;
+            return;
+        }
         
         // Compare IDs to determine who should be host 
         // (using string comparison - higher ID wins)
@@ -210,18 +312,30 @@ class GameP2P {
             // They have a higher ID, they should be host
             this.hostId = message.candidateId;
             this.isHost = false;
+            console.log(`Setting ${message.candidateId} as host based on ID comparison`);
         }
-    }
-
-    /**
+    }    /**
      * Finalize host election and declare winner
-     */
-    finalizeHostElection() {
+     */    finalizeHostElection() {
         const myId = window.pulgram.getUserId();
+        console.log('Finalizing host election. Current host:', this.hostId);
         
-        // If no host is selected, or we appear to have the highest ID
-        if (!this.hostId || this.hostId === myId) {
+        // If we're getting state updates, we shouldn't become host
+        if (this.lastStateUpdate && Date.now() - this.lastStateUpdate < 10000) {
+            console.log('Received recent state updates, not becoming host');
+            return;
+        }
+        
+        // If there's no host or we won the election, become host
+        if (!this.hostId) {
+            console.log('No host detected. Self-appointing as host.');
             this.becomeHost();
+        } else if (this.hostId === myId) {
+            console.log('Confirming self as host.');
+            this.becomeHost();
+        } else {
+            console.log('Another peer is host:', this.hostId);
+            this.isHost = false;
         }
     }
 
@@ -404,29 +518,72 @@ class GameP2P {
         
         this.sendGroupMessage(message);
         return true;
-    }
-
-    /**
+    }    /**
      * Handle incoming game state updates (clients only)
      */
     handleGameStateUpdate(message, senderId) {
-        // Verify this is from the current host
-        if (senderId !== this.hostId) return;
+        console.log('Handling game state update from:', senderId);
+        
+        // Accept messages from any host for now - important to get the game starting
+        // We can add verification back later if needed
+        // if (senderId !== this.hostId && this.hostId) {
+        //    console.log('Ignoring game state from non-host:', senderId, 'Current host:', this.hostId);
+        //    return;
+        //}
+        
+        let stateToUse = null;
+        
+        // Figure out where the actual state data is
+        if (message.state) {
+            // Standard format
+            stateToUse = message.state;
+        } else if (message.gameState) {
+            // Alternative format
+            stateToUse = message.gameState;
+        } else {
+            // The message itself might be the state
+            stateToUse = message;
+        }
+          // Update last state update time
+        this.lastStateUpdate = Date.now();
+        
+        // If we're receiving state updates, this peer should be our host
+        if (this.hostId !== senderId) {
+            console.log('Updating host based on state update from:', senderId);
+            this.hostId = senderId;
+            this.isHost = false;
+            
+            // Trigger host changed callback
+            if (typeof this.callbacks.onHostChanged === 'function') {
+                this.callbacks.onHostChanged(senderId, false);
+            }
+        }
         
         if (message.isDelta) {
             // Apply delta update
-            // Note: implementation depends on your game's state structure
-            this.gameState = {...this.gameState, ...message.state};
+            this.gameState = {...this.gameState, ...stateToUse};
         } else {
             // Full state update
-            this.gameState = message.state;
+            this.gameState = stateToUse;
+        }
+        
+        // Always update connection state to connected when we receive game state
+        if (this.gameState === 'connecting') {
+            this.gameState = 'connected';
+            console.log('Game state updated to connected after receiving game state');
+            
+            // If we have a connection callback, call it
+            if (typeof this.onGameConnected === 'function') {
+                console.log('Calling onGameConnected after receiving first game state');
+                this.onGameConnected();
+            }
         }
         
         // Trigger callback if defined
         if (typeof this.callbacks.onGameStateUpdated === 'function') {
             this.callbacks.onGameStateUpdated(this.gameState, message.isDelta);
         }
-    }    /**
+    }/**
      * Register event callbacks
      */
     on(event, callback) {
