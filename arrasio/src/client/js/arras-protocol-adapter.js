@@ -257,17 +257,65 @@ class ArrasProtocolAdapter {
             this.gameState.roomSpeed
         ]);
     }
-    
-    /**
+      /**
      * Create an update message in the game's protocol format
      */
     createUpdateMessage() {
-        // This is a simplified version - the actual game has a complex update format
-        // For now we'll create a basic update message
+        // Get the game state
+        const gameState = this.gameState;
         
-        // In arras.io, updates contain entity information in a specific format
-        // This is a placeholder
-        return this.protocol.encode(['u', Date.now(), []]);
+        // Create entities array for the update
+        const entities = [];
+        
+        // Add players to entities list
+        for (let playerId in gameState.players) {
+            const player = gameState.players[playerId];
+            entities.push({
+                id: parseInt(playerId) || Math.floor(Math.random() * 1000000),
+                index: 0, // Tank type index
+                x: player.position.x,
+                y: player.position.y, 
+                vx: 0, // Velocity X
+                vy: 0, // Velocity Y
+                size: 30, // Default tank size
+                facing: player.direction,
+                vfacing: player.direction,
+                twiggle: 0,
+                layer: 0,
+                color: 0, // Team color
+                health: player.health,
+                shield: 0,
+                alpha: 1,
+                name: player.name || `Player ${playerId.substring(0, 4)}`,
+                score: player.score || 0,
+                nameColor: "#FFFFFF"
+            });
+        }
+        
+        // Add other game entities
+        for (let entityId in gameState.entities) {
+            const entity = gameState.entities[entityId];
+            entities.push({
+                id: parseInt(entityId) || Math.floor(Math.random() * 1000000),
+                index: 1, // Shape type index
+                x: entity.position.x,
+                y: entity.position.y,
+                vx: 0,
+                vy: 0,
+                size: entity.size || 10,
+                facing: entity.direction || 0,
+                vfacing: entity.direction || 0,
+                twiggle: 0,
+                layer: 0,
+                color: 1, // Default shape color
+                health: entity.health || 1,
+                shield: 0,
+                alpha: 1
+            });
+        }
+        
+        // Create the update message with the encoded entities
+        return this.protocol.encode(['u', Date.now(), entities]);
     }
     
     /**

@@ -1027,7 +1027,20 @@ const socketInit = (() => {
     })();
     // The initialization function (this is returned)
     return port => {
-        let socket = new WebSocket('ws://' + window.location.hostname + ':' + port);
+        // Check if we're using the P2P system
+        const isPulgramP2PMode = window.pulgram && window.pulgram.isStandaloneMode && window.pulgram.isStandaloneMode();
+        
+        // Either create a P2P connection or a regular WebSocket
+        let socket;
+        if (isPulgramP2PMode) {
+            console.log('Using Pulgram P2P mode instead of WebSocket server');
+            // The WebSocket constructor is already overridden by p2p-websocket-adapter.js
+            socket = new WebSocket('ws://p2p-mode'); // Dummy URL, the adapter ignores it
+        } else {
+            // Regular WebSocket connection to server
+            socket = new WebSocket('ws://' + window.location.hostname + ':' + port);
+        }
+        
         // Set up our socket
         socket.binaryType = 'arraybuffer';
         socket.open = false;

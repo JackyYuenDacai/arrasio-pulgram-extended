@@ -5,12 +5,26 @@
 
 // Wait for both the game and pulgram to be ready
 document.addEventListener('DOMContentLoaded', function() {
-    // Check if pulgram is loaded
+    // Check if pulgram is loaded and if we're in standalone mode
     if (window.pulgram) {
-        initializeP2PGame();
+        // Only initialize P2P if we're in standalone mode
+        if (window.pulgram.isStandaloneMode && window.pulgram.isStandaloneMode()) {
+            console.log("Pulgram detected in standalone mode. Initializing P2P game...");
+            initializeP2PGame();
+        } else {
+            console.log("Pulgram detected but not in standalone mode. Using normal server connection.");
+        }
     } else {
         // Wait for pulgram to be ready
-        document.addEventListener('pulgramready', initializeP2PGame);
+        document.addEventListener('pulgramready', function() {
+            // Same check for standalone mode
+            if (window.pulgram.isStandaloneMode && window.pulgram.isStandaloneMode()) {
+                console.log("Pulgram ready in standalone mode. Initializing P2P game...");
+                initializeP2PGame();
+            } else {
+                console.log("Pulgram ready but not in standalone mode. Using normal server connection.");
+            }
+        });
     }
 });
 

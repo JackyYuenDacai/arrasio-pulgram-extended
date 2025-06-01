@@ -182,11 +182,18 @@ class P2PWebSocket {    constructor(url) {
 function enableP2PWebSocket() {
     console.log('Enabling P2P WebSocket mode');
     
+    // Only enable if we're in the right mode
+    if (window.pulgram && (!window.pulgram.isStandaloneMode || !window.pulgram.isStandaloneMode())) {
+        console.log('Not in standalone mode, skipping P2P WebSocket override');
+        return;
+    }
+    
     // Store the original WebSocket for possible restore later
     window._originalWebSocket = window.WebSocket;
     
     // Override the WebSocket constructor
     window.WebSocket = function(url, protocols) {
+        console.log('Creating P2P WebSocket for URL:', url);
         return new P2PWebSocket(url, protocols);
     };
 }

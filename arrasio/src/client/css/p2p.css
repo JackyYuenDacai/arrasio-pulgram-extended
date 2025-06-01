@@ -1,0 +1,161 @@
+/* P2P UI Styles */
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeOut {
+    from { opacity: 1; transform: translateY(0); }
+    to { opacity: 0; transform: translateY(10px); }
+}
+
+@keyframes pulse {
+    0% { box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.4); }
+    70% { box-shadow: 0 0 0 6px rgba(255, 255, 255, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(255, 255, 255, 0); }
+}
+
+#p2pStatus {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    background-color: rgba(0, 0, 0, 0.6);
+    color: white;
+    padding: 12px;
+    border-radius: 5px;
+    font-family: Ubuntu, Arial, sans-serif;
+    font-size: 14px;
+    z-index: 1000;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+    transition: all 0.3s ease;
+    max-width: 300px;
+}
+
+#p2pStatus.host {
+    background-color: rgba(0, 100, 0, 0.6);
+}
+
+#p2pStatus.client {
+    background-color: rgba(0, 0, 100, 0.6);
+}
+
+#p2pStatus.disconnected {
+    background-color: rgba(100, 0, 0, 0.6);
+}
+
+#p2pStatus .mode {
+    font-weight: bold;
+    color: #ffcc00;
+    margin-bottom: 5px;
+    text-align: center;
+    font-size: 16px;
+}
+
+#p2pStatus .host-status {
+    position: relative;
+}
+
+#p2pStatus .host-indicator {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    margin-right: 5px;
+    background-color: #4CAF50;
+    animation: pulse 2s infinite;
+}
+
+#p2pStatus .notification-area {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+#p2pStatus .notification {
+    padding: 8px;
+    margin-top: 5px;
+    background-color: rgba(255, 255, 255, 0.2);
+    border-radius: 3px;
+    animation: fadeIn 0.3s ease;
+}
+
+#p2pStatus .status-row {
+    margin: 4px 0;
+    display: flex;
+    justify-content: space-between;
+}
+
+#p2pStatus .status-label {
+    font-weight: bold;
+    margin-right: 10px;
+}
+
+#p2pStatus .status-value {
+    text-align: right;
+}
+
+#p2pStatus .ping-good {
+    color: #4CAF50;
+}
+
+#p2pStatus .ping-medium {
+    color: #FFC107;
+}
+
+#p2pStatus .ping-bad {
+    color: #F44336;
+}
+
+/* Minimize button */
+#p2pStatus .minimize-btn {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+    opacity: 0.6;
+    transition: opacity 0.3s;
+}
+
+#p2pStatus .minimize-btn:hover {
+    opacity: 1;
+}
+
+#p2pStatus.minimized {
+    width: 16px;
+    height: 16px;
+    overflow: hidden;
+    padding: 8px;
+    background-color: rgba(0, 0, 0, 0.3);
+}
+
+#p2pStatus.minimized:hover {
+    background-color: rgba(0, 0, 0, 0.6);
+}
+
+/* Game events */
+.game-event {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background-color: rgba(0, 0, 0, 0.7);
+    color: white;
+    padding: 15px 30px;
+    border-radius: 5px;
+    font-size: 20px;
+    font-weight: bold;
+    z-index: 1001;
+    animation: eventFadeIn 0.5s ease-in, eventFadeOut 0.5s ease-out 2.5s forwards;
+}
+
+@keyframes eventFadeIn {
+    from { opacity: 0; transform: translate(-50%, -70%); }
+    to { opacity: 1; transform: translate(-50%, -50%); }
+}
+
+@keyframes eventFadeOut {
+    from { opacity: 1; transform: translate(-50%, -50%); }
+    to { opacity: 0; transform: translate(-50%, -30%); }
+}
